@@ -174,7 +174,19 @@ void patchVCS(u32 base_addr){
 	// IsModelLoaded = (void*)(0x08ad3698);
 
 }
-void patchLCS(u32 base_addr){}
+void patchLCS(u32 base_addr){
+    logPrintf("> patching LCS(0x%08X)", base_addr);
+
+	
+	/// CRITICAL /// /// /// /// /// /// /// /// /// /// /// /// /// /// /// /// ///
+	HIJACK_FUNCTION(base_addr + 0x00294E88, buttonsToActionPatched, buttonsToAction); //for button input
+	MAKE_CALL(base_addr + 0x002AF398, sceKernelGetSystemTimeWidePatched);
+
+
+	/// DEFINE FUNCTIONS FROM GAME HERE /// /// /// /// /// /// /// /// /// /// /// /// /// /// /// /// ///
+	
+	
+}
 
 int patch(u32 base_addr) {
 	// CREDITS TO FREAKLER FOR FINDING THESE
