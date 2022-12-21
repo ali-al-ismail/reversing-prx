@@ -1,3 +1,5 @@
+// HUGE CREDITS TO FREAKLER FOR HIS RESEARCH AND HIS ORIGINAL CODE WRITTEN IN C
+
 #include <pspsdk.h>
 #include <pspkernel.h>
 #include <pspctrl.h>
@@ -44,19 +46,25 @@
         MAKE_JUMP((u32)patch_buffer + 4, _func_ + 8);             \
         _sw(0x08000000 | (((u32)(f) >> 2) & 0x03FFFFFF), _func_); \
         _sw(0, _func_ + 4);                                       \
-        ptr = (void *)patch_buffer;                               \
+        ptr = (typeof(ptr))patch_buffer;                               \
     }
-
-
-u32 mod_text_addr; // module text start address
-u32 mod_text_size;
-u32 mod_data_size;
+// get type of var1 and cast type to var2
 
 PSP_MODULE_INFO("reversing_prx", 0, 1, 0);
-static STMOD_HANDLER previous;
 register int gp asm("gp");
-SceCtrlData pad;
+u32 mod_base_addr; // this is usually 08804000 for PPSSPP
+u32 mod_text_size;
+u32 mod_data_size;
+bool isVCS{0}, isLCS{0};
 const char *loggingfile = "ms0:/log.txt"; // LOGGING FILE FOR DEBUGGING
+
+int pplayer, pcar;
+
+SceCtrlData pad;
+int hold_n = 0;
+u32 old_buttons = 0, current_buttons = 0, pressed_buttons = 0, hold_buttons = 0, lx, ly, rx, ry;
+float xstick, ystick;
+
 
 template <typename ... Args>
 void logPrintf(const char *format, Args ... args)
@@ -71,6 +79,120 @@ void clearICacheFor(u32 instructionAddr) {
 	// clearing instruction cache for our changes to take effect
 	asm("cache 8, 0($a0)\n");
 }
+////////////////////////////////////////////////////
+/*
+DEFINE YOUR PROTOYPE FUNCTIONS FROM THE GAME HERE
+IT SHOULD FOLLOW THE FORMAT OF:
+
+typedef returntype (* funcname)(funcargs);
+funcname SomeName;
+
+then define it in the appropriate patch section like:
+SomeName = (funcname)(base_addr + addroOfFunc);
+
+*/
+
+typedef int (* ButtonsToAction)(void *a1);
+ButtonsToAction buttonsToAction;
+int buttonsToActionPatched(void *a1);
+
+typedef int(* GetPPLAYER)(); //player pointer
+GetPPLAYER getPPlayer;
+typedef int (* GetPCAR)(); //player car pointer
+GetPCAR getPCar;
+typedef int (* SetWantedLevel)(int pplayer, int stars);
+SetWantedLevel setWantedLevel;
+
+// VCS ONLY
+typedef void (*KillPlayer)(int pplayer);
+typedef void (*RequestModel)(int something, int model);
+typedef void (*LoadRequestedModels)(bool s);
+typedef bool (*IsModelLoaded)(int model);
+
+//////////////////THIS RUNS BASICALLY EVERY FRAME, USE IT TO YOUR WILL//////////////////////////
+SceInt64 sceKernelGetSystemTimeWidePatched(void) { //LCS & VCS
+
+  /// calculations for FPS
+  SceInt64 cur_micros = sceKernelGetSystemTimeWide();
+
+	
+	/// pplayer
+	pplayer = getPPlayer();
+	  
+	/// pcar 
+	pcar = getPCar();
+    
+    if(pressed_buttons & PSP_CTRL_LTRIGGER){
+        setWantedLevel(pplayer, 4);
+    }
+
+	
+	return cur_micros;
+}
+
+// EXAMPLE OF A HIJACKED FUNCTION
+int buttonsToActionPatched(void *a1) { //LCS & VCS
+	int res = buttonsToAction(a1);
+	 
+	///////////////////////////////////////////
+	sceCtrlPeekBufferPositive(&pad, 1);
+	
+	xstick = (float)(pad.Lx - 128) / (float)128; 
+	ystick = (float)(pad.Ly - 128) / (float)128;
+			
+	old_buttons = current_buttons;
+	current_buttons = pad.Buttons;
+	pressed_buttons = current_buttons & ~old_buttons;
+	hold_buttons = pressed_buttons;
+
+	if (old_buttons & current_buttons) {
+		if (hold_n >= 10) {
+			hold_buttons = current_buttons;
+			hold_n = 8;
+		} hold_n++;
+	} else hold_n = 0;
+	///////////////////////////////////////////
+
+	return res;
+}
+
+void patchVCS(u32 base_addr){
+    logPrintf("> patching VCS");
+
+  
+	/// CRITICAL /// /// /// /// /// /// /// /// /// /// /// /// /// /// /// /// ///
+	MAKE_CALL(base_addr + 0x002030D4, sceKernelGetSystemTimeWidePatched); //
+	HIJACK_FUNCTION(base_addr + 0x0018A288, buttonsToActionPatched, buttonsToAction);
+	
+	/// DEFINE FUNCTIONS FROM GAME HERE /// /// /// /// /// /// /// /// /// /// /// /// /// /// /// /// ///
+    getPPlayer = (GetPPLAYER)(base_addr + 0x15C424); 
+	getPCar = (GetPCAR)(base_addr + 0x0015C2C8);
+	setWantedLevel = (SetWantedLevel)(base_addr + 0x00143470);
+	// KillPlayer = (void*)(base_addr + 0x0015D4B0);
+	// RequestModel = (void*)(0x08ad4040);
+	// LoadRequestedModels = (void*)(0x08ad3610);
+	// IsModelLoaded = (void*)(0x08ad3698);
+
+}
+void patchLCS(u32 base_addr){}
+
+int patch(u32 base_addr) {
+	// CREDITS TO FREAKLER FOR FINDING THESE
+	if (strcmp((char *)(base_addr + 0x00307F54), "GTA3") == 0) {
+		logPrintf("> found ULUS-10041 @ 0x%08X", base_addr + 0x00307F54);
+		isLCS = 1;
+		patchLCS(base_addr);
+    }
+	
+	if( strcmp((char *)(base_addr + 0x0036F8D8), "GTA3") == 0 ) {
+		logPrintf("> found ULUS-10160 @ 0x%08X", base_addr + 0x0036F8D8);
+		isVCS = 1;
+		patchVCS(base_addr);
+    }
+	
+	return 0;
+}
+
 
 // SETUP THE MODULE AND START
 void checkPPSSPPModules()
@@ -88,22 +210,26 @@ void checkPPSSPPModules()
             {
                 continue;
             }
+            if (strcmp(info.name, "GTA3") == 0){
                 logPrintf("[IMPORTANT] PPSSPP has been found.");
-                logPrintf("[IMPORTANT] Module name: %s", info.name);
-                logPrintf("[IMPORTANT] Module text address: %08X", info.text_addr);
-                logPrintf("[IMPORTANT] Module text size: %08X", info.text_size);
-                logPrintf("[IMPORTANT] Module data size: %08X", info.data_size);
-                mod_text_addr = info.text_addr;
+                logPrintf("[IMPORTANT] GTA has been found... finding version.");
+                mod_base_addr = info.text_addr; // base address, PPSSPP is usually 08804000
                 mod_text_size = info.text_size;
                 mod_data_size = info.data_size;
 
+                int ret = patch(mod_base_addr);
+		        if( ret != 0 ){return;} // Error in patching
+
                 sceKernelDcacheWritebackAll();
                 return;
+                
+            }
         }
     }
 }
 extern "C" int module_start(SceSize args, void *argp)
 {
+    sceIoRemove(loggingfile);
     checkPPSSPPModules();
     return 0;
 }
