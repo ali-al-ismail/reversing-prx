@@ -46,9 +46,17 @@
         MAKE_JUMP((u32)patch_buffer + 4, _func_ + 8);             \
         _sw(0x08000000 | (((u32)(f) >> 2) & 0x03FFFFFF), _func_); \
         _sw(0, _func_ + 4);                                       \
-        ptr = (typeof(ptr))patch_buffer;                               \
+        ptr = (typeof(ptr))patch_buffer;                             \
     }
-// get type of var1 and cast type to var2
+
+#define DEFINE_GAME_FUNCTION(funcname, returntype, ...) \
+    typedef returntype (* funcname##_t)(__VA_ARGS__); \
+    funcname##_t funcname;
+   
+#define GAME_FUNCTION(funcname,addr) \
+    funcname = (funcname##_t)(addr);
+
+
 
 PSP_MODULE_INFO("reversing_prx", 0, 1, 0);
 register int gp asm("gp");
@@ -96,13 +104,9 @@ typedef int (* ButtonsToAction)(void *a1);
 ButtonsToAction buttonsToAction;
 int buttonsToActionPatched(void *a1);
 
-typedef int(* GetPPLAYER)(); //player pointer
-GetPPLAYER getPPlayer;
-typedef int (* GetPCAR)(); //player car pointer
-GetPCAR getPCar;
-typedef int (* SetWantedLevel)(int pplayer, int stars);
-SetWantedLevel setWantedLevel;
-
+DEFINE_GAME_FUNCTION(getPPlayer, int);
+DEFINE_GAME_FUNCTION(getPCar, int);
+DEFINE_GAME_FUNCTION(setWantedLevel, int, int pplayer, int stars);
 // VCS ONLY
 typedef void (*KillPlayer)(int pplayer);
 typedef void (*RequestModel)(int something, int model);
@@ -165,9 +169,9 @@ void patchVCS(u32 base_addr){
 	HIJACK_FUNCTION(base_addr + 0x0018A288, buttonsToActionPatched, buttonsToAction);
 	
 	/// DEFINE FUNCTIONS FROM GAME HERE /// /// /// /// /// /// /// /// /// /// /// /// /// /// /// /// ///
-    getPPlayer = (GetPPLAYER)(base_addr + 0x15C424); 
-	getPCar = (GetPCAR)(base_addr + 0x0015C2C8);
-	setWantedLevel = (SetWantedLevel)(base_addr + 0x00143470);
+    GAME_FUNCTION(getPPlayer,base_addr + 0x15C424); 
+    GAME_FUNCTION(getPCar,base_addr + 0x0015C2C8);
+    GAME_FUNCTION(setWantedLevel,base_addr + 0x00143470);
 	// KillPlayer = (void*)(base_addr + 0x0015D4B0);
 	// RequestModel = (void*)(0x08ad4040);
 	// LoadRequestedModels = (void*)(0x08ad3610);
