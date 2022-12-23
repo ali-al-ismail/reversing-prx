@@ -44,9 +44,15 @@
         MAKE_JUMP((u32)patch_buffer + 4, _func_ + 8);             \
         _sw(0x08000000 | (((u32)(f) >> 2) & 0x03FFFFFF), _func_); \
         _sw(0, _func_ + 4);                                       \
-        ptr = (void *)patch_buffer;                               \
+        ptr = (typeof(ptr))patch_buffer;                               \
     }
 
+#define DEFINE_GAME_FUNCTION(funcname, returntype, ...) \
+    typedef returntype (* funcname##_t)(__VA_ARGS__); \
+    funcname##_t funcname;
+   
+#define GAME_FUNCTION(funcname,addr) \
+    funcname = (funcname##_t)(addr);
 
 u32 mod_text_addr; // module text start address
 u32 mod_text_size;
